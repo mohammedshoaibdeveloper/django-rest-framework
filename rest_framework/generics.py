@@ -1,291 +1,602 @@
-"""
-Generic views that provide commonly needed behaviour.
-"""
-from django.core.exceptions import ValidationError
-from django.db.models.query import QuerySet
-from django.http import Http404
-from django.shortcuts import get_object_or_404 as _get_object_or_404
+from re import A
+from tkinter import SE
+from django.shortcuts import render
+from rest_framework.views import APIView
+from django.http import HttpResponse
+from rest_framework.response import Response
+from django.conf import settings
+import Api.usable as uc
+from .models import *
+from passlib.hash import django_pbkdf2_sha256 as handler
+import jwt 
+import datetime
+from decouple import config
+from django.db.models import F
 
-from rest_framework import mixins, views
-from rest_framework.settings import api_settings
+# Create your views here.
+### ADMIN AND USER LOGIN
+class login(APIView):
+     def post(self,request):
+         requireFields = ['email','password']
+         validator = uc.keyValidation(True,True,request.data,requireFields)
+            
+         if validator:
+            return Response(validator,status = 200)
+            
+         else:
+               email = request.data.get('email')
+               password = request.data.get('password')
+               fetchAccount = Account.objects.filter(email=email).first()
+               if fetchAccount:
+                  if handler.verify(password,fetchAccount.password):
+                     if fetchAccount.role == 'admin':
+                        access_token_payload = {
+                              'id':str(fetchAccount.uid),
+                              'firstname':fetchAccount.firstname, 
+                              'email':fetchAccount.email, 
+                              'exp': datetime.datetime.utcnow() + datetime.timedelta(days=22),
+                              'iat': datetime.datetime.utcnow(),
+
+                           }
+
+                        
+                        access_token = jwt.encode(access_token_payload,config('adminkey'),algorithm = 'HS256')
+                        data = {'uid':fetchAccount.uid,'firstname':fetchAccount.firstname,'lastname':fetchAccount.lastname,'email':fetchAccount.email,'contactno':fetchAccount.contactno,'role':fetchAccount.role}
+
+                        whitelistToken(user = fetchAccount,token = access_token,useragent = request.META['HTTP_USER_AGENT'],created_at = datetime.datetime.now()).save()
+
+                        
+                        return Response({"status":True,"message":"Login Successlly","token":access_token,"admindata":data})
+
+                     else:
+                        access_token_payload = {
+                              'id':str(fetchAccount.uid),
+                              'firstname':fetchAccount.firstname, 
+                              'email':fetchAccount.email, 
+                              'exp': datetime.datetime.utcnow() + datetime.timedelta(days=22),
+                              'iat': datetime.datetime.utcnow(),
+
+                           }
+
+                        
+                        access_token = jwt.encode(access_token_payload,config('customerkey'),algorithm = 'HS256')
+                        data = {'uid':fetchAccount.uid,'firstname':fetchAccount.firstname,'lastname':fetchAccount.lastname,'email':fetchAccount.email,'contactno':fetchAccount.contactno,'role':fetchAccount.role}
+
+                        whitelistToken(user = fetchAccount,token = access_token,useragent = request.META['HTTP_USER_AGENT'],created_at = datetime.datetime.now()).save()
+
+                        
+                        return Response({"status":True,"message":"Login Successlly","token":access_token,"custumerdata":data})
+                  else:
+                     return Response({"status":False,"message":"Invalid Creadientials"})
+               else:
+                  return Response({"status":False,"message":"Invalid Creadientials"})
+          
+               
+### PASSWORD ENCRYPTED
+
+class encryptpass(APIView):
+    def post(self,request):
+        try:    
+            passw = handler.hash(request.data.get('passw'))
 
 
-def get_object_or_404(queryset, *filter_args, **filter_kwargs):
-    """
-    Same as Django's standard shortcut, but make sure to also raise 404
-    if the filter_kwargs don't match the required types.
-    """
-    try:
-        return _get_object_or_404(queryset, *filter_args, **filter_kwargs)
-    except (TypeError, ValueError, ValidationError):
-        raise Http404
+            return HttpResponse(passw)
+
+        except Exception as e:
+            
+            message = {'status':'Error','message':str(e)}
+            return Response(message)
+
+### CATEGORY ADD
+class categoryAdd(APIView):
+
+### CATEGORY ADD
+   def post(self,request):
+      requireFields = ['name','description']
+      validator = uc.keyValidation(True,True,request.data,requireFields)
+            
+      if validator:
+         return Response(validator,status = 200)
+            
+      else:
+         my_token = uc.admintokenauth(request.META['HTTP_AUTHORIZATION'][7:])
+         if my_token:
+            name  = request.data.get('name')
+            description = request.data.get('description')
+            
+            access = Category.objects.filter(name = name ).first()
+            if access:
+               return Response({"status":False,"message":"Category Name Already Exist"})
+               
+            data = Category(name = name, description = description)
+            data.save()
+
+            return Response ({"status":True,"message":"Category Successlly Add"})
+
+         else:
+            return Response ({"status":False,"message":"Unauthorized"})
 
 
-class GenericAPIView(views.APIView):
-    """
-    Base class for all other generic views.
-    """
-    # You'll need to either set these attributes,
-    # or override `get_queryset()`/`get_serializer_class()`.
-    # If you are overriding a view method, it is important that you call
-    # `get_queryset()` instead of accessing the `queryset` property directly,
-    # as `queryset` will get evaluated only once, and those results are cached
-    # for all subsequent requests.
-    queryset = None
-    serializer_class = None
+### CATEGORY GET
+class Getcategory(APIView):
+   def get (self,request):
+      my_token = uc.admintokenauth(request.META['HTTP_AUTHORIZATION'][7:])
+      if my_token:
+         data = Category.objects.all().values('uid','name','description').order_by("-created_at")
+         return Response ({"status":True,"data":data })
+      else:
+         return Response ({"status":False,"message":"Unauthorized"})
 
-    # If you want to use object lookups other than pk, set 'lookup_field'.
-    # For more complex lookup requirements override `get_object()`.
-    lookup_field = 'pk'
-    lookup_url_kwarg = None
 
-    # The filter backend classes to use for queryset filtering
-    filter_backends = api_settings.DEFAULT_FILTER_BACKENDS
+### CATEGORY UPDATE
+class Editcategory(APIView):
+   def put (self,request):
+      requireFields = ['uid','name','description']
+      validator = uc.keyValidation(True,True,request.data,requireFields)
+            
+      if validator:
+         return Response(validator,status = 200)
+            
+      else:
+         my_token = uc.admintokenauth(request.META['HTTP_AUTHORIZATION'][7:])
+         if my_token:
+            uid = request.data.get('uid')
 
-    # The style to use for queryset pagination.
-    pagination_class = api_settings.DEFAULT_PAGINATION_CLASS
+            checkcategory= Category.objects.filter(uid = uid).first()
 
-    def get_queryset(self):
-        """
-        Get the list of items for this view.
-        This must be an iterable, and may be a queryset.
-        Defaults to using `self.queryset`.
+            if checkcategory:
+               checkcategory.name = request.data.get('name') 
+               checkcategory.description = request.data.get('description') 
 
-        This method should always be used rather than accessing `self.queryset`
-        directly, as `self.queryset` gets evaluated only once, and those results
-        are cached for all subsequent requests.
-
-        You may want to override this if you need to provide different
-        querysets depending on the incoming request.
-
-        (Eg. return a list of items that is specific to the user)
-        """
-        assert self.queryset is not None, (
-            "'%s' should either include a `queryset` attribute, "
-            "or override the `get_queryset()` method."
-            % self.__class__.__name__
-        )
-
-        queryset = self.queryset
-        if isinstance(queryset, QuerySet):
-            # Ensure queryset is re-evaluated on each request.
-            queryset = queryset.all()
-        return queryset
-
-    def get_object(self):
-        """
-        Returns the object the view is displaying.
-
-        You may want to override this if you need to provide non-standard
-        queryset lookups.  Eg if objects are referenced using multiple
-        keyword arguments in the url conf.
-        """
-        queryset = self.filter_queryset(self.get_queryset())
-
-        # Perform the lookup filtering.
-        lookup_url_kwarg = self.lookup_url_kwarg or self.lookup_field
-
-        assert lookup_url_kwarg in self.kwargs, (
-            'Expected view %s to be called with a URL keyword argument '
-            'named "%s". Fix your URL conf, or set the `.lookup_field` '
-            'attribute on the view correctly.' %
-            (self.__class__.__name__, lookup_url_kwarg)
-        )
-
-        filter_kwargs = {self.lookup_field: self.kwargs[lookup_url_kwarg]}
-        obj = get_object_or_404(queryset, **filter_kwargs)
-
-        # May raise a permission denied
-        self.check_object_permissions(self.request, obj)
-
-        return obj
-
-    def get_serializer(self, *args, **kwargs):
-        """
-        Return the serializer instance that should be used for validating and
-        deserializing input, and for serializing output.
-        """
-        serializer_class = self.get_serializer_class()
-        kwargs.setdefault('context', self.get_serializer_context())
-        return serializer_class(*args, **kwargs)
-
-    def get_serializer_class(self):
-        """
-        Return the class to use for the serializer.
-        Defaults to using `self.serializer_class`.
-
-        You may want to override this if you need to provide different
-        serializations depending on the incoming request.
-
-        (Eg. admins get full serialization, others get basic serialization)
-        """
-        assert self.serializer_class is not None, (
-            "'%s' should either include a `serializer_class` attribute, "
-            "or override the `get_serializer_class()` method."
-            % self.__class__.__name__
-        )
-
-        return self.serializer_class
-
-    def get_serializer_context(self):
-        """
-        Extra context provided to the serializer class.
-        """
-        return {
-            'request': self.request,
-            'format': self.format_kwarg,
-            'view': self
-        }
-
-    def filter_queryset(self, queryset):
-        """
-        Given a queryset, filter it with whichever filter backend is in use.
-
-        You are unlikely to want to override this method, although you may need
-        to call it either from a list view, or from a custom `get_object`
-        method if you want to apply the configured filtering backend to the
-        default queryset.
-        """
-        for backend in list(self.filter_backends):
-            queryset = backend().filter_queryset(self.request, queryset, self)
-        return queryset
-
-    @property
-    def paginator(self):
-        """
-        The paginator instance associated with the view, or `None`.
-        """
-        if not hasattr(self, '_paginator'):
-            if self.pagination_class is None:
-                self._paginator = None
+               checkcategory.save()
+               return Response({"status":True,"message":"Category Updated Successfully"})
             else:
-                self._paginator = self.pagination_class()
-        return self._paginator
+               return Response({"status":True,"message":"Data not found"})
 
-    def paginate_queryset(self, queryset):
-        """
-        Return a single page of results, or `None` if pagination is disabled.
-        """
-        if self.paginator is None:
-            return None
-        return self.paginator.paginate_queryset(queryset, self.request, view=self)
-
-    def get_paginated_response(self, data):
-        """
-        Return a paginated style `Response` object for the given output data.
-        """
-        assert self.paginator is not None
-        return self.paginator.get_paginated_response(data)
+         else:
+            return Response ({"status":False,"message":"Unauthorized"})
 
 
-# Concrete view classes that provide method handlers
-# by composing the mixin classes with the base view.
-
-class CreateAPIView(mixins.CreateModelMixin,
-                    GenericAPIView):
-    """
-    Concrete view for creating a model instance.
-    """
-    def post(self, request, *args, **kwargs):
-        return self.create(request, *args, **kwargs)
-
-
-class ListAPIView(mixins.ListModelMixin,
-                  GenericAPIView):
-    """
-    Concrete view for listing a queryset.
-    """
-    def get(self, request, *args, **kwargs):
-        return self.list(request, *args, **kwargs)
-
-
-class RetrieveAPIView(mixins.RetrieveModelMixin,
-                      GenericAPIView):
-    """
-    Concrete view for retrieving a model instance.
-    """
-    def get(self, request, *args, **kwargs):
-        return self.retrieve(request, *args, **kwargs)
+### CATEGORY DELETE 
+class deletecategory(APIView):
+   def delete(self,request):
+      requireFields = ['uid']
+      validator = uc.keyValidation(True,True,request.GET,requireFields)
+            
+      if validator:
+         return Response(validator,status = 200)
+            
+      else:
+         my_token = uc.admintokenauth(request.META['HTTP_AUTHORIZATION'][7:])
+         if my_token:
+            uid = request.GET['uid']
+            data = Category.objects.filter(uid = uid).first()
+            if data:
+               data.delete()
+               return Response({"status":True,"message":"Data Deleted Successfully"})
+            else:
+               return Response({"status":False,"message":"Data not found"})
 
 
-class DestroyAPIView(mixins.DestroyModelMixin,
-                     GenericAPIView):
-    """
-    Concrete view for deleting a model instance.
-    """
-    def delete(self, request, *args, **kwargs):
-        return self.destroy(request, *args, **kwargs)
+###  GET SPECIFIC CATEGORY 
+class Getspecificcategory(APIView):
+   def get(self,request):
+      requireFields = ['uid']
+      validator = uc.keyValidation(True,True,request.GET,requireFields)
+            
+      if validator:
+         return Response(validator,status = 200)
+            
+      else:
+         my_token = uc.admintokenauth(request.META['HTTP_AUTHORIZATION'][7:])
+         if my_token:
+               uid = request.GET['uid']
+               data = Category.objects.filter(uid = uid).values("uid","name",'description').first()
+               if data:
+                  return Response({"status":True,"data":data},200)
+               else:
+                  return Response({"status":False,"message":"Data not found"})
 
 
-class UpdateAPIView(mixins.UpdateModelMixin,
-                    GenericAPIView):
-    """
-    Concrete view for updating a model instance.
-    """
-    def put(self, request, *args, **kwargs):
-        return self.update(request, *args, **kwargs)
+### ADMIN ADD LOGO
 
-    def patch(self, request, *args, **kwargs):
-        return self.partial_update(request, *args, **kwargs)
+class Addlogo(APIView):
+    def post (self,request):
+        requireFields = ['image']
+        validator = uc.keyValidation(True,True,request.data,requireFields)
+                
+        if validator:
+            return Response(validator,status = 200)
+                
+        else:
+            my_token = uc.admintokenauth(request.META['HTTP_AUTHORIZATION'][7:])
+            if my_token:
+                image  = request.data.get('image')
+                
+                data = logo(image = image)
+                data.save()
 
+                return Response ({"status":True,"message":"logo Successlly Add"})
 
-class ListCreateAPIView(mixins.ListModelMixin,
-                        mixins.CreateModelMixin,
-                        GenericAPIView):
-    """
-    Concrete view for listing a queryset or creating a model instance.
-    """
-    def get(self, request, *args, **kwargs):
-        return self.list(request, *args, **kwargs)
-
-    def post(self, request, *args, **kwargs):
-        return self.create(request, *args, **kwargs)
-
-
-class RetrieveUpdateAPIView(mixins.RetrieveModelMixin,
-                            mixins.UpdateModelMixin,
-                            GenericAPIView):
-    """
-    Concrete view for retrieving, updating a model instance.
-    """
-    def get(self, request, *args, **kwargs):
-        return self.retrieve(request, *args, **kwargs)
-
-    def put(self, request, *args, **kwargs):
-        return self.update(request, *args, **kwargs)
-
-    def patch(self, request, *args, **kwargs):
-        return self.partial_update(request, *args, **kwargs)
+            else:
+                return Response ({"status":False,"message":"Unauthorized"})
 
 
-class RetrieveDestroyAPIView(mixins.RetrieveModelMixin,
-                             mixins.DestroyModelMixin,
-                             GenericAPIView):
-    """
-    Concrete view for retrieving or deleting a model instance.
-    """
-    def get(self, request, *args, **kwargs):
-        return self.retrieve(request, *args, **kwargs)
-
-    def delete(self, request, *args, **kwargs):
-        return self.destroy(request, *args, **kwargs)
+### LOGO GET
+class Getlogo(APIView):
+   def get (self,request):
+      my_token = uc.admintokenauth(request.META['HTTP_AUTHORIZATION'][7:])
+      if my_token:
+         data = logo.objects.all().values('uid','image').order_by("-created_at")
+         return Response ({"status":True,"data":data })
+      else:
+         return Response ({"status":False,"message":"Unauthorized"})
 
 
-class RetrieveUpdateDestroyAPIView(mixins.RetrieveModelMixin,
-                                   mixins.UpdateModelMixin,
-                                   mixins.DestroyModelMixin,
-                                   GenericAPIView):
-    """
-    Concrete view for retrieving, updating or deleting a model instance.
-    """
-    def get(self, request, *args, **kwargs):
-        return self.retrieve(request, *args, **kwargs)
 
-    def put(self, request, *args, **kwargs):
-        return self.update(request, *args, **kwargs)
+### LOGO UPDATE
+class Editlogo(APIView):
+   def put (self,request):
+      requireFields = ['uid','image']
+      validator = uc.keyValidation(True,True,request.data,requireFields)
+            
+      if validator:
+         return Response(validator,status = 200)
+            
+      else:
+         my_token = uc.admintokenauth(request.META['HTTP_AUTHORIZATION'][7:])
+         if my_token:
+            uid = request.data.get('uid')
 
-    def patch(self, request, *args, **kwargs):
-        return self.partial_update(request, *args, **kwargs)
+            checkclogo= logo.objects.filter(uid = uid).first()
 
-    def delete(self, request, *args, **kwargs):
-        return self.destroy(request, *args, **kwargs)
+            if checkclogo:
+               checkclogo.image = request.data.get('image') 
+
+
+               checkclogo.save()
+               return Response({"status":True,"message":"Logo Edit Successfully"})
+            else:
+               return Response({"status":True,"message":"Data not found"})
+
+         else:
+            return Response ({"status":False,"message":"Unauthorized"})
+
+
+
+### DELETE LOGO  
+class deletelogo(APIView):
+   def delete(self,request):
+      requireFields = ['uid']
+      validator = uc.keyValidation(True,True,request.GET,requireFields)
+            
+      if validator:
+         return Response(validator,status = 200)
+            
+      else:
+         my_token = uc.admintokenauth(request.META['HTTP_AUTHORIZATION'][7:])
+         if my_token:
+            uid = request.GET['uid']
+            data = logo.objects.filter(uid = uid).first()
+            if data:
+               data.delete()
+               return Response({"status":True,"message":"Data Deleted Successfully"})
+            else:
+               return Response({"status":False,"message":"Data not found"})
+
+
+
+###  GET SPECIFIC LOGO 
+class Getspecificlogo(APIView):
+   def get(self,request):
+      requireFields = ['uid']
+      validator = uc.keyValidation(True,True,request.GET,requireFields)
+            
+      if validator:
+         return Response(validator,status = 200)
+            
+      else:
+         my_token = uc.admintokenauth(request.META['HTTP_AUTHORIZATION'][7:])
+         if my_token:
+               uid = request.GET['uid']
+               data = logo.objects.filter(uid = uid).values("uid","image").first()
+               if data:
+                  return Response({"status":True,"data":data},200)
+               else:
+                  return Response({"status":False,"message":"Data not found"})
+
+###  ADD SLIDER 
+class addSlider(APIView):
+    def post(self, request):
+        requireFields = ['image','categoryid']
+        validator = uc.keyValidation(True,True,request.data,requireFields)
+                
+        if validator:
+            return Response(validator,status = 200)
+                
+        else:
+            my_token = uc.admintokenauth(request.META['HTTP_AUTHORIZATION'][7:])
+            if my_token:
+                image = request.data.getlist('image')
+                categoryid = request.data.get('categoryid')
+
+                getcategory = Category.objects.filter(uid = categoryid).first()
+
+                for i in range(len(image)):
+
+                    imageObj = Slider(categoryid = getcategory,image =image[i]  )
+                    imageObj.save()
+                return Response({"status":True,"message":"Slider image  successfully"})
+            else:
+                return Response({"status":False,"message":"Unauthorized"})
+
+
+###  GET SLIDER 
+class getSliderImages(APIView):
+    def get(self,request):
+        my_token = uc.admintokenauth(request.META['HTTP_AUTHORIZATION'][7:])
+        if my_token:
+            data = Slider.objects.all().values('uid','image',CategoryName=F('categoryid__name')).order_by("-created_at")
+            print(data)
+            for i in range(len(data)):
+
+                mydata = Slider.objects.filter(categoryid = data[i]['uid']).values('image').first()
+                if mydata:
+                
+                    data[i]['Slider'] = mydata['image']
+                    
+                else:
+                    return Response ({"status":True,"data":data })
+        else:
+            return Response ({"status":False,"message":"Unauthorized"})
+
+###  DELETE SLIDER 
+class DeleteSlider(APIView):
+   def delete (self,request):
+      requireFields = ['uid']
+      validator = uc.keyValidation(True,True,request.GET,requireFields)
+            
+      if validator:
+         return Response(validator,status = 200)
+            
+      else:
+         my_token = uc.admintokenauth(request.META['HTTP_AUTHORIZATION'][7:])
+         if my_token:
+            uid = request.GET['uid']
+            data = Slider.objects.filter(uid = uid).first()
+            if data:
+               data.delete()
+               return Response({"status":True,"message":"Data Deleted Successfully"})
+            else:
+               return Response({"status":False,"message":"Data not found"})
+
+###  GET SPECIFIC SLIDER 
+class GetSpecificSliderImage(APIView):
+   def get (self, request):
+         requireFields = ['uid']
+         validator = uc.keyValidation(True,True,request.GET,requireFields)
+               
+         if validator:
+            return Response(validator,status = 200)
+               
+         else:
+            my_token = uc.admintokenauth(request.META['HTTP_AUTHORIZATION'][7:])
+            if my_token:
+                  uid = request.GET['uid']
+                  data = Slider.objects.filter(uid = uid).values("uid","image",'categoryid').first()
+                  if data:
+                     return Response({"status":True,"data":data},200)
+                  else:
+                     return Response({"status":False,"message":"Data not found"})
+
+
+###  ADD NAVBAR
+class Addnavbar(APIView):
+   def post (self,request):
+      requireFields = ['name']
+      validator = uc.keyValidation(True,True,request.data,requireFields)
+            
+      if validator:
+         return Response(validator,status = 200)
+            
+      else:
+         my_token = uc.admintokenauth(request.META['HTTP_AUTHORIZATION'][7:])
+         if my_token:
+            name = request.data.get('name')
+
+            access = navbar.objects.filter(name = name ).first()
+            if access:
+               return Response({"status":False,"message":"Category Name Already Exist"})
+               
+            data = navbar(name = name)
+            data.save()
+
+            return Response ({"status":True,"message":"Category Successlly Add"})
+
+         else:
+            return Response ({"status":False,"message":"Unauthorized"})
+
+###  GET NAVBAR
+class GetNavbar(APIView):
+   def get(self, request):
+      my_token = uc.admintokenauth(request.META['HTTP_AUTHORIZATION'][7:])
+      if my_token:
+         data = navbar.objects.all().values('uid','name').order_by("-created_at")
+         return Response ({"status":True,"data":data })
+      else:
+         return Response ({"status":False,"message":"Unauthorized"})
+
+###  EDIT NAVBAR
+class EditNavbar(APIView):
+   def put (self,request):
+      requireFields = ['uid','name']
+      validator = uc.keyValidation(True,True,request.data,requireFields)
+            
+      if validator:
+         return Response(validator,status = 200)
+            
+      else:
+         my_token = uc.admintokenauth(request.META['HTTP_AUTHORIZATION'][7:])
+         if my_token:
+            uid = request.data.get('uid')
+
+            checknavbar= navbar.objects.filter(uid = uid).first()
+            if checknavbar:
+               checknavbar.name = request.data.get('name') 
+
+               checknavbar.save()
+               return Response({"status":True,"message":"Category Updated Successfully"})
+            else:
+               return Response({"status":True,"message":"Data not found"})
+
+         else:
+            return Response ({"status":False,"message":"Unauthorized"})
+
+###  DELETE NAVBAR
+class deleteNavbar(APIView):
+   def delete (self,request):
+      requireFields = ['uid']
+      validator = uc.keyValidation(True,True,request.GET,requireFields)
+            
+      if validator:
+         return Response(validator,status = 200)
+            
+      else:
+         my_token = uc.admintokenauth(request.META['HTTP_AUTHORIZATION'][7:])
+         if my_token:
+            uid = request.GET['uid']
+            data = navbar.objects.filter(uid = uid).first()
+            if data:
+               data.delete()
+               return Response({"status":True,"message":"Data Deleted Successfully"})
+            else:
+               return Response({"status":False,"message":"Data not found"})
+
+###  GET SPECIFIC NAVBAR
+class GetSpecificNavbar(APIView):
+   def get(self, request):
+      requireFields = ['uid']
+      validator = uc.keyValidation(True,True,request.GET,requireFields)
+            
+      if validator:
+         return Response(validator,status = 200)
+            
+      else:
+         my_token = uc.admintokenauth(request.META['HTTP_AUTHORIZATION'][7:])
+         if my_token:
+               uid = request.GET['uid']
+               data = navbar.objects.filter(uid = uid).values("uid","name").first()
+               if data:
+                  return Response({"status":True,"data":data},200)
+               else:
+                  return Response({"status":False,"message":"Data not found"})
+
+### ADD SECTION
+class AddSection(APIView):
+   def post (self,request):
+      requireFields = ['mainheading','subheading','maindescription','shortdescription','icon','categoryid']
+      validator = uc.keyValidation(True,True,request.data,requireFields)
+            
+      if validator:
+         return Response(validator,status = 200)
+         
+      else:
+         my_token = uc.admintokenauth(request.META['HTTP_AUTHORIZATION'][7:])
+         if my_token:
+            mainheading = request.data.get('mainheading')
+            subheading = request.data.get('subheading')
+            maindescription = request.data.get('maindescription')
+            shortdescription = request.data.get('shortdescription')
+            icon = request.data.get('icon')
+            categoryid = request.data.get('categoryid')
+
+            getcategory = Category.objects.filter(name = categoryid).first()
+               
+            data = Section(mainheading = mainheading,subheading = subheading,maindescription= maindescription,shortdescription = shortdescription ,icon =  icon,categoryid= getcategory)
+            data.save()
+
+            return Response ({"status":True,"message":"Section Successlly Add"})
+
+         else:
+            return Response ({"status":False,"message":"Unauthorized"})
+
+### GET SECTION
+class GetSections(APIView):
+   def get (self, request):
+      my_token = uc.admintokenauth(request.META['HTTP_AUTHORIZATION'][7:])
+      if my_token:
+         data = Section.objects.all().values('uid','mainheading','subheading','maindescription','shortdescription','icon','categoryid').order_by("-created_at")
+         return Response ({"status":True,"data":data })
+      else:
+         return Response ({"status":False,"message":"Unauthorized"})
+
+### EDIT SECTION
+class EditSection(APIView):
+   def put (self,request):
+      requireFields = ['uid','mainheading','subheading','maindescription','shortdescription','icon']
+      validator = uc.keyValidation(True,True,request.data,requireFields)
+            
+      if validator:
+         return Response(validator,status = 200)
+         
+      else:
+         my_token = uc.admintokenauth(request.META['HTTP_AUTHORIZATION'][7:])
+         if my_token:
+            uid = request.data.get('uid')
+
+            checksection= Section.objects.filter(uid = uid).first()
+
+            if checksection:
+               checksection.mainheading = request.data.get('mainheading') 
+               checksection.subheading = request.data.get('subheading') 
+               checksection.subheading = request.data.get('subheading') 
+               checksection.maindescription = request.data.get('maindescription') 
+               checksection.shortdescription = request.data.get('shortdescription') 
+               checksection.icon = request.data.get('icon') 
+
+               checksection.save()
+               return Response({"status":True,"message":"Category Updated Successfully"})
+            else:
+               return Response({"status":True,"message":"Data not found"})
+
+         else:
+            return Response ({"status":False,"message":"Unauthorized"})
+
+### DELETE SECTION
+class deleteSections(APIView):
+   def delete (self, request):
+      requireFields = ['uid']
+      validator = uc.keyValidation(True,True,request.GET,requireFields)
+            
+      if validator:
+         return Response(validator,status = 200)
+            
+      else:
+         my_token = uc.admintokenauth(request.META['HTTP_AUTHORIZATION'][7:])
+         if my_token:
+            uid = request.GET['uid']
+            data = Section.objects.filter(uid = uid).first()
+            if data:
+               data.delete()
+               return Response({"status":True,"message":"Data Deleted Successfully"})
+            else:
+               return Response({"status":False,"message":"Data not found"})
+
+### GET SECTION
+class GetspecificSections(APIView):
+   def get(self, request):
+      requireFields = ['uid']
+      validator = uc.keyValidation(True,True,request.GET,requireFields)
+            
+      if validator:
+         return Response(validator,status = 200)
+            
+      else:
+         my_token = uc.admintokenauth(request.META['HTTP_AUTHORIZATION'][7:])
+         if my_token:
+               uid = request.GET['uid']
+               data = Section.objects.filter(uid = uid).values('uid','mainheading','subheading','maindescription','shortdescription','icon','categoryid').first()
+               if data:
+                  return Response({"status":True,"data":data},200)
+               else:
+                  return Response({"status":False,"message":"Data not found"})
